@@ -1,8 +1,6 @@
 package user
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/entity"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/exception"
@@ -101,16 +99,4 @@ func (u *UserSettingsEntity) SetDefaultModelID(modelID string) {
 	u.SettingConfig.DefaultModel = modelID
 }
 
-// AccountEntity 账户实体（对应 Java 的 AccountEntity）
-type AccountEntity struct {
-	ID        string    `gorm:"column:id;primaryKey" json:"id"`
-	UserID    string    `gorm:"column:user_id" json:"userId"`
-	Balance   float64   `gorm:"column:balance" json:"balance"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updatedAt"`
-}
-
-// TableName 指定表名
-func (AccountEntity) TableName() string {
-	return "accounts"
-}
+// 注意：AccountEntity 已迁移到 account.go 中（包含完整字段）

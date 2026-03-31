@@ -26,12 +26,7 @@ type UserSettingsRepository interface {
 	UpdateByUserID(settings *UserSettingsEntity) error
 }
 
-// AccountRepository 账户仓储接口（对应 Java 的 AccountRepository）
-type AccountRepository interface {
-	FindByUserID(userID string) (*AccountEntity, error)
-	Create(account *AccountEntity) error
-	Update(account *AccountEntity) error
-}
+// 注意：AccountRepository 已迁移到 account.go 中（包含完整实现）
 
 // ---- GORM 实现 ----
 

@@ -4,25 +4,33 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	appChat "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/chat"
 	appConv "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/conversation"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/auth"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/interfaces/api/common"
+	"go.uber.org/zap"
 )
 
 // SessionController Agent会话控制器（对应 Java 的 PortalAgentSessionController）
 type SessionController struct {
 	agentSessionAppService  *appConv.AgentSessionAppService
 	conversationAppService  *appConv.ConversationAppService
+	chatAppService          *appChat.ChatAppService
+	logger                  *zap.Logger
 }
 
 // NewSessionController 创建会话控制器
 func NewSessionController(
 	agentSessionAppService *appConv.AgentSessionAppService,
 	conversationAppService *appConv.ConversationAppService,
+	chatAppService *appChat.ChatAppService,
+	logger *zap.Logger,
 ) *SessionController {
 	return &SessionController{
 		agentSessionAppService: agentSessionAppService,
 		conversationAppService: conversationAppService,
+		chatAppService:         chatAppService,
+		logger:                 logger,
 	}
 }
 
@@ -91,13 +99,43 @@ func (ctrl *SessionController) DeleteSession(c *gin.Context) {
 }
 
 // Chat 发送消息（POST /agents/sessions/chat）
-// TODO: 涉及复杂的SSE流式响应、Agent工作流、MCP工具调用等，后续迁移
+// 集成 ChatAppService 实现 SSE 流式聊天
 func (ctrl *SessionController) Chat(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, common.BadRequest("聊天功能正在迁移中"))
+	var req appChat.ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ErrorJSON(c, 400, "参数错误: "+err.Error())
+		return
+	}
+
+	userID := auth.GetCurrentUserID(c)
+
+	// 设置SSE响应头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+	c.Header("X-Accel-Buffering", "no")
+
+	// 创建SSE传输
+	writer := c.Writer
+	transport := appChat.NewSSETransport(writer, ctrl.logger)
+
+	// 启动流式聊天
+	if err := ctrl.chatAppService.StreamChat(&req, userID, transport); err != nil {
+		transport.SendError(err.Error())
+		return
+	}
+
+	// 保持连接直到客户端断开
+	<-c.Request.Context().Done()
+	transport.Close()
 }
 
 // InterruptSession 中断对话会话（POST /agents/sessions/:sessionId/interrupt）
-// TODO: 涉及ChatSessionManager，后续迁移
 func (ctrl *SessionController) InterruptSession(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, common.BadRequest("中断功能正在迁移中"))
+	sessionID := c.Param("sessionId")
+	stopped := ctrl.chatAppService.StopChat(sessionID)
+	c.JSON(http.StatusOK, common.SuccessWithData(gin.H{
+		"stopped": stopped,
+	}))
 }

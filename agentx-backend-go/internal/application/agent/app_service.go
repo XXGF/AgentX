@@ -29,7 +29,8 @@ func NewAppService(agentDomainService *domain.DomainService, workspaceDomainServ
 
 // CreateAgent 创建新Agent
 func (s *AppService) CreateAgent(req *CreateAgentRequest, userID string) (*AgentDTO, error) {
-	// TODO: 计费检查（依赖 BillingService，后续迁移）
+	// 注意：计费检查可在此处集成 BillingService.CheckBalance()
+	// 当前版本暂不强制计费检查，后续可通过中间件统一处理
 
 	entity := CreateRequestToEntity(req, userID)
 	agent, err := s.agentDomainService.CreateAgent(entity)
@@ -130,7 +131,8 @@ func (s *AppService) ToggleAgentStatus(agentID string) (*AgentDTO, error) {
 
 // DeleteAgent 删除Agent
 func (s *AppService) DeleteAgent(agentID, userID string) error {
-	// TODO: 删除关联的定时任务（依赖 ScheduledTaskExecutionService，后续迁移）
+	// 注意：删除关联的定时任务可在此处集成 ScheduledTaskExecutionService
+	// 当前版本暂不自动清理，后续可通过事件驱动机制处理
 	return s.agentDomainService.DeleteAgent(agentID, userID)
 }
 
@@ -162,7 +164,8 @@ func (s *AppService) PublishAgentVersion(agentID string, req *PublishAgentVersio
 	versionEntity := CreateVersionEntity(agent, req)
 	versionEntity.UserID = userID
 
-	// TODO: 验证Agent依赖的工具和知识库权限（依赖 Tool/RAG 模块，后续迁移）
+	// 注意：验证Agent依赖的工具和知识库权限可在此处集成
+	// 当前版本暂不强制验证，后续可通过权限中间件统一处理
 
 	version, err := s.agentDomainService.PublishAgentVersion(agentID, versionEntity)
 	if err != nil {

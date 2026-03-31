@@ -4,6 +4,7 @@ import (
 	"time"
 
 	domain "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/scheduledtask"
+	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/scheduler"
 )
 
 // ScheduledTaskDTO 定时任务DTO
@@ -71,11 +72,15 @@ func EntitiesToDTOs(entities []domain.ScheduledTaskEntity) []*ScheduledTaskDTO {
 
 // AppService 定时任务应用服务
 type AppService struct {
-	domainService *domain.DomainService
+	domainService   *domain.DomainService
+	scheduleService *scheduler.TaskScheduleService
 }
 
-func NewAppService(domainService *domain.DomainService) *AppService {
-	return &AppService{domainService: domainService}
+func NewAppService(domainService *domain.DomainService, scheduleService *scheduler.TaskScheduleService) *AppService {
+	return &AppService{
+		domainService:   domainService,
+		scheduleService: scheduleService,
+	}
 }
 
 // CreateScheduledTask 创建定时任务
@@ -90,14 +95,14 @@ func (s *AppService) CreateScheduledTask(req *CreateScheduledTaskRequest, userID
 		Status:       domain.ScheduleTaskStatusActive,
 	}
 
-	// TODO: 计算下次执行时间（需要 TaskScheduleService）
+	// 计算下次执行时间
+	nextTime := s.scheduleService.CalculateNextExecuteTime(entity)
+	entity.NextExecuteTime = nextTime
 
 	saved, err := s.domainService.CreateTask(entity)
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO: 调度任务执行（需要 ScheduledTaskExecutionService）
 
 	return EntityToDTO(saved), nil
 }

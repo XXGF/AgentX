@@ -3,22 +3,44 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	appAgent "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/agent"
+	appAccount "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/account"
 	appApiKey "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/apikey"
 	appAuth "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/auth"
+	appContainer "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/container"
 	appConv "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/conversation"
 	appLLM "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/llm"
 	appMemory "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/memory"
 	appScheduledTask "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/scheduledtask"
+	appOrder "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/order"
+	appPayment "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/payment"
+	appProduct "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/product"
+	appChat "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/chat"
+	appRag "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/rag"
+	appRule "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/rule"
+	appTask "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/task"
 	appTool "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/tool"
+	appTrace "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/trace"
+	appUsage "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/usage"
 	appUser "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/user"
+	infraPayment "github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/payment"
+	infraDocker "github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/docker"
+	infraScheduler "github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/scheduler"
+	infraEmail "github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/email"
 	domainAgent "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/agent"
 	domainApiKey "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/apikey"
 	domainAuth "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/auth"
+	domainContainer "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/container"
 	domainConv "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/conversation"
 	domainLLM "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/llm"
 	domainMemory "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/memory"
+	domainOrder "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/order"
+	domainProduct "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/product"
+	domainRag "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/rag"
+	domainRule "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/rule"
 	domainScheduledTask "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/scheduledtask"
+	domainTask "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/task"
 	domainTool "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/tool"
+	domainTrace "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/trace"
 	domainUser "github.com/lucky-aeon/agentx/agentx-backend-go/internal/domain/user"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/auth"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/config"
@@ -53,17 +75,17 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	})
 
 	// ========== 公开接口（不需要认证）==========
-	setupPublicRoutes(api, db, jwtUtils)
+	setupPublicRoutes(api, db, jwtUtils, cfg)
 
 	// ========== 需要认证的接口 ==========
 	authenticated := api.Group("")
 	authenticated.Use(middleware.AuthMiddleware(jwtUtils))
-	setupAuthenticatedRoutes(authenticated, db)
+	setupAuthenticatedRoutes(authenticated, db, cfg)
 
 	// ========== 管理员接口 ==========
 	adminGroup := authenticated.Group("/admin")
 	adminGroup.Use(middleware.AdminAuthMiddleware())
-	setupAdminRoutes(adminGroup, db)
+	setupAdminRoutes(adminGroup, db, cfg)
 
 	// ========== 外部API接口（使用API Key认证）==========
 	external := api.Group("/v1")
@@ -73,15 +95,22 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 }
 
 // setupPublicRoutes 注册公开路由（登录、注册等）
-func setupPublicRoutes(rg *gin.RouterGroup, db *gorm.DB, jwtUtils *auth.JWTUtils) {
+func setupPublicRoutes(rg *gin.RouterGroup, db *gorm.DB, jwtUtils *auth.JWTUtils, cfg *config.Config) {
 	// === 初始化 User 模块依赖 ===
 	userRepo := domainUser.NewUserRepository(db)
 	userSettingsRepo := domainUser.NewUserSettingsRepository(db)
 	userDomainService := domainUser.NewDomainService(userRepo, userSettingsRepo)
-	loginAppService := appUser.NewLoginAppService(userDomainService, jwtUtils)
+
+	// 初始化邮件和验证码服务
+	pubLogger, _ := zap.NewProduction()
+	emailService := infraEmail.NewSMTPEmailService(&cfg.Mail, pubLogger)
+	verificationService := infraEmail.NewVerificationCodeService(pubLogger)
+	captchaService := infraEmail.NewCaptchaService()
+
+	loginAppService := appUser.NewLoginAppService(userDomainService, jwtUtils, emailService, verificationService, captchaService)
 
 	// === 登录注册路由（对应 Java 的 LoginController）===
-	loginController := portal.NewLoginController(loginAppService)
+	loginController := portal.NewLoginController(loginAppService, captchaService)
 	rg.POST("/login", loginController.Login)
 	rg.POST("/register", loginController.Register)
 	rg.POST("/get-captcha", loginController.GetCaptcha)
@@ -117,7 +146,7 @@ func setupPublicRoutes(rg *gin.RouterGroup, db *gorm.DB, jwtUtils *auth.JWTUtils
 }
 
 // setupAuthenticatedRoutes 注册需要认证的路由
-func setupAuthenticatedRoutes(rg *gin.RouterGroup, db *gorm.DB) {
+func setupAuthenticatedRoutes(rg *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// === User 模块（对应 Java 的 PortalUserController）===
 	userRepo := domainUser.NewUserRepository(db)
 	userSettingsRepo := domainUser.NewUserSettingsRepository(db)
@@ -197,15 +226,28 @@ func setupAuthenticatedRoutes(rg *gin.RouterGroup, db *gorm.DB) {
 	contextRepo := domainConv.NewContextRepository(db)
 	sessionDomainService := domainConv.NewSessionDomainService(sessionRepo)
 	conversationDomainService := domainConv.NewConversationDomainService(messageRepo)
-	_ = domainConv.NewMessageDomainService(messageRepo, contextRepo) // 后续Chat功能使用
-	_ = domainConv.NewContextDomainService(contextRepo)               // 后续Chat功能使用
+	messageDomainService := domainConv.NewMessageDomainService(messageRepo, contextRepo)
+	contextDomainService := domainConv.NewContextDomainService(contextRepo)
+
+	// 创建 Chat 应用服务（供 SessionController 和 ChatController 使用）
+	logger, _ := zap.NewProduction()
+	chatAppService := appChat.NewChatAppService(
+		conversationDomainService,
+		sessionDomainService,
+		agentDomainService,
+		agentWorkspaceDomainService,
+		llmDomainService,
+		contextDomainService,
+		messageDomainService,
+		logger,
+	)
 
 	agentSessionAppService := appConv.NewAgentSessionAppService(
 		agentWorkspaceDomainService, agentDomainService,
 		sessionDomainService, conversationDomainService,
 	)
 	conversationAppService := appConv.NewConversationAppService(conversationDomainService, sessionDomainService)
-	sessionController := portal.NewSessionController(agentSessionAppService, conversationAppService)
+	sessionController := portal.NewSessionController(agentSessionAppService, conversationAppService, chatAppService, logger)
 
 	sessions := rg.Group("/agents/sessions")
 	{
@@ -250,7 +292,8 @@ func setupAuthenticatedRoutes(rg *gin.RouterGroup, db *gorm.DB) {
 	// === ScheduledTask 模块（对应 Java 的 PortalScheduledTaskController）===
 	scheduledTaskRepo := domainScheduledTask.NewScheduledTaskRepository(db)
 	scheduledTaskDomainService := domainScheduledTask.NewDomainService(scheduledTaskRepo)
-	scheduledTaskAppService := appScheduledTask.NewAppService(scheduledTaskDomainService)
+	taskScheduleService := infraScheduler.NewTaskScheduleService()
+	scheduledTaskAppService := appScheduledTask.NewAppService(scheduledTaskDomainService, taskScheduleService)
 	scheduledTaskController := portal.NewScheduledTaskController(scheduledTaskAppService)
 
 	scheduledTasks := rg.Group("/scheduled-tasks")
@@ -295,12 +338,174 @@ func setupAuthenticatedRoutes(rg *gin.RouterGroup, db *gorm.DB) {
 		memoryGroup.DELETE("/items/:itemId", memoryController.DeleteMemory)
 	}
 
+	// === Task 模块（对应 Java 的 TaskController）===
+	taskRepo := domainTask.NewTaskRepository(db)
+	taskDomainService := domainTask.NewDomainService(taskRepo)
+	taskAppService := appTask.NewAppService(taskDomainService)
+	taskController := portal.NewTaskController(taskAppService)
+
+	tasks := rg.Group("/tasks")
+	{
+		tasks.GET("/session/:sessionId/latest", taskController.GetSessionTasks)
+	}
+
+	// === Trace 模块（对应 Java 的 PortalTraceController）===
+	summaryRepo := domainTrace.NewExecutionSummaryRepository(db)
+	detailRepo := domainTrace.NewExecutionDetailRepository(db)
+	traceDomainService := domainTrace.NewDomainService(summaryRepo, detailRepo)
+	traceAppService := appTrace.NewAppService(traceDomainService)
+	traceController := portal.NewTraceController(traceAppService)
+
+	traces := rg.Group("/traces")
+	{
+		traces.GET("/history", traceController.GetExecutionHistory)
+		traces.GET("/statistics", traceController.GetUserExecutionStatistics)
+		traces.GET("/sessions/:sessionId", traceController.GetSessionExecutionHistory)
+		traces.GET("/:traceId", traceController.GetTraceDetail)
+		traces.GET("/:traceId/details", traceController.GetExecutionDetails)
+	}
+
+	// === Order 模块（对应 Java 的 OrderController）===
+	orderRepo := domainOrder.NewOrderRepository(db)
+	orderDomainService := domainOrder.NewDomainService(orderRepo)
+	orderAppService := appOrder.NewAppService(orderDomainService)
+	orderController := portal.NewOrderController(orderAppService)
+
+	orders := rg.Group("/orders")
+	{
+		orders.GET("", orderController.GetUserOrders)
+		orders.GET("/:orderId", orderController.GetOrderDetail)
+	}
+
+	// === Product 模块（对应 Java 的 PortalProductController）===
+	productRepo := domainProduct.NewProductRepository(db)
+	productDomainService := domainProduct.NewDomainService(productRepo)
+	productAppService := appProduct.NewAppService(productDomainService)
+	productController := portal.NewProductController(productAppService)
+
+	products := rg.Group("/products")
+	{
+		products.GET("/:productId", productController.GetProductByID)
+		products.GET("/business", productController.GetProductByBusinessKey)
+		products.GET("/active", productController.GetActiveProducts)
+		products.GET("/business/active", productController.IsProductActive)
+	}
+
+	// === Account 模块（对应 Java 的 AccountController）===
+	accountRepo := domainUser.NewAccountRepository(db)
+	accountDomainService := domainUser.NewAccountDomainService(accountRepo)
+	accountAppService := appAccount.NewAppService(accountDomainService)
+	accountController := portal.NewAccountController(accountAppService)
+
+	accounts := rg.Group("/accounts")
+	{
+		accounts.GET("/current", accountController.GetCurrentUserAccount)
+	}
+
+	// === Payment 模块（对应 Java 的 PaymentController）===
+	paymentLogger, _ := zap.NewProduction()
+	paymentFactory := infraPayment.NewPaymentProviderFactory(&cfg.Payment, paymentLogger)
+	paymentAppService := appPayment.NewAppService(orderDomainService, accountDomainService, paymentFactory)
+	paymentController := portal.NewPaymentController(paymentAppService)
+
+	payments := rg.Group("/payments")
+	{
+		payments.POST("/recharge", paymentController.CreateRechargePayment)
+		payments.GET("/orders/:orderNo/status", paymentController.QueryOrderStatus)
+		payments.GET("/methods", paymentController.GetAvailablePaymentMethods)
+	}
+
+	// === Usage 模块（对应 Java 的 PortalUsageRecordController）===
+	usageRecordRepo := domainUser.NewUsageRecordRepository(db)
+	usageRecordDomainService := domainUser.NewUsageRecordDomainService(usageRecordRepo)
+	usageAppService := appUsage.NewAppService(usageRecordDomainService)
+	usageRecordController := portal.NewUsageRecordController(usageAppService)
+
+	usageRecords := rg.Group("/usage-records")
+	{
+		usageRecords.GET("/:recordId", usageRecordController.GetUsageRecordByID)
+		usageRecords.GET("", usageRecordController.QueryUsageRecords)
+		usageRecords.GET("/current/total-cost", usageRecordController.GetCurrentUserTotalCost)
+	}
+
+	// === Upload 模块（对应 Java 的 UploadController）===
+	uploadController := portal.NewUploadController(&cfg.Upload)
+
+	upload := rg.Group("/upload")
+	{
+		upload.GET("/credential", uploadController.GetUploadCredential)
+	}
+
 	// === 其他模块 ===
-	// TODO: 后续迁移
+
+	// === RAG 模块（对应 Java 的 RAG 相关 Controller）===
+	userRagRepo := domainRag.NewUserRagRepository(db)
+	ragVersionRepo := domainRag.NewRagVersionRepository(db)
+	fileDetailRepo := domainRag.NewFileDetailRepository(db)
+	docUnitRepo := domainRag.NewDocumentUnitRepository(db)
+	qaRepo := domainRag.NewRagQaDatasetRepository(db)
+
+	fileOpAppService := appRag.NewFileOperationAppService(userRagRepo, fileDetailRepo, docUnitRepo)
+	fileOpController := portal.NewFileOperationController(fileOpAppService)
+
+	ragMarketAppService := appRag.NewRagMarketAppService(ragVersionRepo, userRagRepo)
+	ragMarketController := portal.NewRagMarketController(ragMarketAppService)
+
+	ragPublishAppService := appRag.NewRagPublishAppService(ragVersionRepo, userRagRepo)
+	ragPublishController := portal.NewRagPublishController(ragPublishAppService)
+
+	ragSearchAppService := appRag.NewRAGSearchAppService(userRagRepo)
+	ragSearchController := portal.NewRagSearchController(ragSearchAppService)
+
+	ragQaAppService := appRag.NewRagQaDatasetAppService(qaRepo, userRagRepo)
+	ragQaController := portal.NewRagQaDatasetController(ragQaAppService)
+
+	ragFiles := rg.Group("/rag/files")
+	{
+		ragFiles.GET("/dataset/:dataSetId", fileOpController.GetFilesByDataSetID)
+		ragFiles.GET("/:fileId/document-units", fileOpController.GetDocumentUnits)
+		ragFiles.DELETE("/:fileId", fileOpController.DeleteFile)
+	}
+
+	ragMarket := rg.Group("/rag/market")
+	{
+		ragMarket.GET("", ragMarketController.GetMarketList)
+		ragMarket.POST("/install", ragMarketController.InstallRag)
+		ragMarket.DELETE("/:userRagId", ragMarketController.UninstallRag)
+		ragMarket.GET("/my", ragMarketController.GetUserRags)
+	}
+
+	ragPublish := rg.Group("/rag/publish")
+	{
+		ragPublish.POST("", ragPublishController.PublishRag)
+		ragPublish.GET("/:originalRagId/versions", ragPublishController.GetVersions)
+	}
+
+	ragSearch := rg.Group("/rag/search")
+	{
+		ragSearch.POST("", ragSearchController.RagSearch)
+		ragSearch.POST("/user-rag/:userRagId", ragSearchController.RagSearchByUserRag)
+	}
+
+	ragQa := rg.Group("/rag/qa")
+	{
+		ragQa.GET("/:userRagId", ragQaController.GetQaDatasets)
+		ragQa.POST("/:userRagId", ragQaController.CreateQaDataset)
+	}
+
+	// === Chat 模块（对应 Java 的 ConversationAppService Chat 功能）===
+	chatController := portal.NewChatController(chatAppService, logger)
+
+	chat := rg.Group("/chat")
+	{
+		chat.POST("/stream", chatController.StreamChat)
+		chat.POST("", chatController.Chat)
+		chat.POST("/stop", chatController.StopChat)
+	}
 }
 
 // setupAdminRoutes 注册管理员路由
-func setupAdminRoutes(rg *gin.RouterGroup, db *gorm.DB) {
+func setupAdminRoutes(rg *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// === Admin User 管理（对应 Java 的 AdminUserController）===
 	userRepo := domainUser.NewUserRepository(db)
 	userSettingsRepo := domainUser.NewUserSettingsRepository(db)
@@ -390,6 +595,80 @@ func setupAdminRoutes(rg *gin.RouterGroup, db *gorm.DB) {
 		adminTools.POST("/official", adminToolController.CreateOfficialTool)
 		adminTools.POST("/:toolId/status", adminToolController.UpdateStatus)
 		adminTools.PUT("/:toolId/global-status", adminToolController.UpdateGlobalStatus)
+	}
+
+	// === Admin Container 管理（对应 Java 的 AdminContainerController）===
+	containerRepo := domainContainer.NewContainerRepository(db)
+	containerTemplateRepo := domainContainer.NewContainerTemplateRepository(db)
+	containerDomainService := domainContainer.NewDomainService(containerRepo, containerTemplateRepo)
+
+	// 初始化Docker服务
+	adminLogger, _ := zap.NewProduction()
+	dockerService := infraDocker.NewDockerEngineService(&cfg.Docker, adminLogger)
+	containerLifecycleService := infraDocker.NewContainerLifecycleService(containerDomainService, dockerService, adminLogger)
+
+	containerAppService := appContainer.NewAppService(containerDomainService, containerLifecycleService)
+	containerTemplateAppService := appContainer.NewTemplateAppService(containerDomainService)
+	adminContainerController := admin.NewAdminContainerController(containerAppService)
+	adminContainerTemplateController := admin.NewAdminContainerTemplateController(containerTemplateAppService)
+
+	adminContainers := rg.Group("/containers")
+	{
+		adminContainers.GET("", adminContainerController.GetContainersPage)
+		adminContainers.GET("/:containerId", adminContainerController.GetContainerByID)
+		adminContainers.POST("/:containerId/start", adminContainerController.StartContainer)
+		adminContainers.POST("/:containerId/stop", adminContainerController.StopContainer)
+		adminContainers.DELETE("/:containerId", adminContainerController.DeleteContainer)
+		adminContainers.GET("/:containerId/logs", adminContainerController.GetContainerLogs)
+	}
+
+	adminContainerTemplates := rg.Group("/container-templates")
+	{
+		adminContainerTemplates.GET("", adminContainerTemplateController.GetEnabledTemplates)
+		adminContainerTemplates.GET("/:templateId", adminContainerTemplateController.GetTemplate)
+		adminContainerTemplates.DELETE("/:templateId", adminContainerTemplateController.DeleteTemplate)
+	}
+
+	// === Admin Product 管理（对应 Java 的 AdminProductController）===
+	adminProductRepo := domainProduct.NewProductRepository(db)
+	adminProductDomainService := domainProduct.NewDomainService(adminProductRepo)
+	adminProductAppService := appProduct.NewAppService(adminProductDomainService)
+	adminProductController := admin.NewAdminProductController(adminProductAppService)
+
+	adminProducts := rg.Group("/products")
+	{
+		adminProducts.GET("", adminProductController.GetProducts)
+		adminProducts.GET("/all", adminProductController.GetAllProducts)
+		adminProducts.GET("/:productId", adminProductController.GetProductByID)
+		adminProducts.DELETE("/:productId", adminProductController.DeleteProduct)
+	}
+
+	// === Admin Order 管理（对应 Java 的 AdminOrderController）===
+	adminOrderRepo := domainOrder.NewOrderRepository(db)
+	adminOrderDomainService := domainOrder.NewDomainService(adminOrderRepo)
+	adminOrderAppService := appOrder.NewAppService(adminOrderDomainService)
+	adminOrderController := admin.NewAdminOrderController(adminOrderAppService)
+
+	adminOrders := rg.Group("/orders")
+	{
+		adminOrders.GET("", adminOrderController.GetAllOrders)
+		adminOrders.GET("/:orderId", adminOrderController.GetOrderDetail)
+	}
+
+	// === Admin Rule 管理（对应 Java 的 AdminRuleController）===
+	adminRuleRepo := domainRule.NewRuleRepository(db)
+	adminRuleDomainService := domainRule.NewDomainService(adminRuleRepo)
+	adminRuleAppService := appRule.NewAppService(adminRuleDomainService)
+	adminRuleController := admin.NewAdminRuleController(adminRuleAppService)
+
+	adminRules := rg.Group("/rules")
+	{
+		adminRules.POST("", adminRuleController.CreateRule)
+		adminRules.PUT("/:ruleId", adminRuleController.UpdateRule)
+		adminRules.GET("/:ruleId", adminRuleController.GetRuleByID)
+		adminRules.GET("", adminRuleController.GetRules)
+		adminRules.GET("/all", adminRuleController.GetAllRules)
+		adminRules.DELETE("/:ruleId", adminRuleController.DeleteRule)
 	}
 }
 

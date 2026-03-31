@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	appUser "github.com/lucky-aeon/agentx/agentx-backend-go/internal/application/user"
+	infraEmail "github.com/lucky-aeon/agentx/agentx-backend-go/internal/infrastructure/email"
 	"github.com/lucky-aeon/agentx/agentx-backend-go/internal/interfaces/api/common"
 	dto "github.com/lucky-aeon/agentx/agentx-backend-go/internal/interfaces/dto/user"
 )
@@ -13,11 +14,15 @@ import (
 // LoginController 登录注册控制器（对应 Java 的 LoginController）
 type LoginController struct {
 	loginAppService *appUser.LoginAppService
+	captchaService  *infraEmail.CaptchaService
 }
 
 // NewLoginController 创建登录控制器
-func NewLoginController(loginAppService *appUser.LoginAppService) *LoginController {
-	return &LoginController{loginAppService: loginAppService}
+func NewLoginController(loginAppService *appUser.LoginAppService, captchaService *infraEmail.CaptchaService) *LoginController {
+	return &LoginController{
+		loginAppService: loginAppService,
+		captchaService:  captchaService,
+	}
 }
 
 // Login 登录（POST /login）
@@ -55,10 +60,10 @@ func (ctrl *LoginController) Register(c *gin.Context) {
 
 // GetCaptcha 获取图形验证码（POST /get-captcha）
 func (ctrl *LoginController) GetCaptcha(c *gin.Context) {
-	// TODO: 实现图形验证码生成（需要 CaptchaUtils）
+	uuid, _, imageBase64 := ctrl.captchaService.GenerateCaptcha()
 	c.JSON(http.StatusOK, common.SuccessWithData(gin.H{
-		"uuid":        "",
-		"imageBase64": "",
+		"uuid":        uuid,
+		"imageBase64": imageBase64,
 	}))
 }
 

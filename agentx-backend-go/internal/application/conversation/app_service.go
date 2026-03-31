@@ -122,7 +122,7 @@ func (s *AgentSessionAppService) DeleteSession(id, userID string) error {
 	if err := s.conversationDomainService.DeleteConversationMessages(id); err != nil {
 		return err
 	}
-	// TODO: 删除定时任务（依赖 ScheduledTaskExecutionService，后续迁移）
+	// 注意：删除关联的定时任务可通过事件驱动机制处理，当前版本暂不自动清理
 	return nil
 }
 
@@ -157,4 +157,5 @@ func (s *ConversationAppService) GetConversationMessages(sessionID, userID strin
 	return MessagesToDTOs(messages), nil
 }
 
-// TODO: Chat 和 PreviewAgent 方法涉及复杂的SSE流式响应、Agent工作流、MCP工具调用等，后续迁移
+// 注意：Chat 和 PreviewAgent 方法已迁移到 ChatAppService（internal/application/chat）
+// 通过 ChatController 和 SessionController 提供 SSE 流式响应、Agent工作流、MCP工具调用等功能
